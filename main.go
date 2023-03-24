@@ -7,10 +7,10 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"log"
-	"mengo/internal/boot"
 	"mengo/internal/constants"
 	"mengo/internal/event"
 	"mengo/internal/poll"
+	"mengo/internal/topic"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,7 +47,6 @@ func main() {
 		log.Fatalf("MongoDB ping failed with error=%v\n", err)
 	}
 	database := client.Database(databaseName)
-	boot.InitDatabase(database)
 	// Create a new HTTP server
 	srv := &http.Server{
 		Addr: ":8080",
@@ -84,27 +83,35 @@ func main() {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request, database *mongo.Database) {
-	if r.URL.Path == "/poll" && r.Method == http.MethodPost {
-		var p poll.Request
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	if r.URL.Path == "/create-topic" && r.Method == http.MethodPost {
+		var model topic.Topic
+		if err := json.NewDecoder(r.Body).Decode(&model); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		log.Printf("Request received=%v\n", p)
-		events := event.List(database, &p.Timestamp)
+		log.Printf("Request received=%v\n", model)
+		topic.Create(database, &model)
+	} else if r.URL.Path == "/poll" && r.Method == http.MethodPost {
+		var model poll.Request
+		if err := json.NewDecoder(r.Body).Decode(&model); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		log.Printf("Request received=%v\n", model)
+		events := event.List(database, model.ConsumerGroup, model.Topic, model.Partition)
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(events); err != nil {
 			http.Error(w, "Serialization error", http.StatusInternalServerError)
 			return
 		}
 	} else if r.URL.Path == "/notify" && r.Method == http.MethodPost {
-		var e event.Event
-		if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		var model event.Payload
+		if err := json.NewDecoder(r.Body).Decode(&model); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		log.Printf("Event received=%v\n", e)
-		e.Create(database)
+		log.Printf("Request received=%v\n", model)
+		event.Persist(database, &model)
 	} else {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
