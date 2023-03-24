@@ -57,7 +57,7 @@ func List(database *mongo.Database, consumerGroup string, topic string, partitio
 	consumerGroupOffset := offset.GetConsumerGroupOffset(database, consumerGroup, topic, partition)
 	cursor, err := collection.Find(ctx, bson.D{
 		{"partition", partition},
-		{"offset", bson.D{{"$gte", consumerGroupOffset}}},
+		{"offset", bson.D{{"$gte", consumerGroupOffset.Offset}}},
 	})
 	if err != nil {
 		panic(err)
@@ -68,6 +68,10 @@ func List(database *mongo.Database, consumerGroup string, topic string, partitio
 	}
 	if results == nil {
 		results = make([]Event, 0)
+	}
+	if len(results) > 0 {
+		last := results[len(results)-1]
+		offset.SetUncommittedConsumerGroupOffset(database, consumerGroup, topic, partition, last.Offset+1)
 	}
 	return results
 }

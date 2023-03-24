@@ -9,6 +9,7 @@ import (
 	"log"
 	"mengo/internal/constants"
 	"mengo/internal/event"
+	"mengo/internal/offset"
 	"mengo/internal/poll"
 	"mengo/internal/topic"
 	"net/http"
@@ -112,6 +113,14 @@ func handleRequest(w http.ResponseWriter, r *http.Request, database *mongo.Datab
 		}
 		log.Printf("Request received=%v\n", model)
 		event.Persist(database, &model)
+	} else if r.URL.Path == "/commit" && r.Method == http.MethodPost {
+		var model offset.CommitRequest
+		if err := json.NewDecoder(r.Body).Decode(&model); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		log.Printf("Request received=%v\n", model)
+		offset.Commit(database, &model)
 	} else {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
