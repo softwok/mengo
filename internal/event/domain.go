@@ -29,6 +29,53 @@ type Payload struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+type PartitionMaxOffset struct {
+	Partition uint8  `bson:"_id"`
+	MaxOffset uint32 `bson:"maxOffset"`
+}
+
+func getTopics(topicOffsetMap *map[offset.TopicPartition]*offset.TopicOffsetCache) []string {
+	topicSet := make(map[string]bool)
+	for topicPartition := range *topicOffsetMap {
+		topicSet[topicPartition.Topic] = true
+	}
+	topics := make([]string, 0, len(topicSet))
+	for topic := range topicSet {
+		topics = append(topics, topic)
+	}
+	return topics
+}
+
+func RebuildLatestOffsets(database *mongo.Database, topicOffsetMap *map[offset.TopicPartition]*offset.TopicOffsetCache) {
+	topics := getTopics(topicOffsetMap)
+	ctx, cancel := context.WithTimeout(context.Background(), constants.DatabaseTimeOut)
+	defer cancel()
+	for _, topic := range topics {
+		collection := database.Collection(topic)
+		pipe := []bson.M{{"$group": bson.M{"_id": "$partition", "maxOffset": bson.M{"$max": "$offset"}}}}
+		cursor, err := collection.Aggregate(ctx, pipe)
+		if err != nil {
+			panic(err)
+		}
+		var results []PartitionMaxOffset
+		if err = cursor.All(ctx, &results); err != nil {
+			panic(err)
+		}
+		if results == nil {
+			results = make([]PartitionMaxOffset, 0)
+		}
+		for _, result := range results {
+			topicOffsetCache := (*topicOffsetMap)[offset.TopicPartition{Topic: topic, Partition: result.Partition}]
+			fmt.Printf("Topic=%v has offset in events=%v and in cache=%v\n", topic, result.MaxOffset,
+				topicOffsetCache.Offset)
+			if topicOffsetCache.Offset < result.MaxOffset {
+				topicOffsetCache.Offset = result.MaxOffset + 1
+				offset.UpdateTopicOffset(database, topic, result.Partition, topicOffsetCache.Offset)
+			}
+		}
+	}
+}
+
 func Persist(database *mongo.Database, payload *Payload, topicOffsetCache *offset.TopicOffsetCache) {
 	topicOffsetCache.Mu.Lock()
 	defer topicOffsetCache.Mu.Unlock()

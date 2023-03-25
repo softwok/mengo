@@ -49,6 +49,7 @@ func main() {
 	}
 	database := client.Database(databaseName)
 	topicOffsetMap := offset.GetTopicOffsetMap(database)
+	event.RebuildLatestOffsets(database, topicOffsetMap)
 	// Create a new HTTP server
 	srv := &http.Server{
 		Addr: ":8080",
@@ -114,8 +115,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request, database *mongo.Datab
 			return
 		}
 		log.Printf("Request received=%v\n", model)
-		m := *topicOffsetMap
-		offsetCache := m[offset.TopicPartition{
+		offsetCache := (*topicOffsetMap)[offset.TopicPartition{
 			Topic:     model.Topic,
 			Partition: model.Partition,
 		}]

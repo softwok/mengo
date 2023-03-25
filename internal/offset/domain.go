@@ -152,6 +152,21 @@ func CreateTopicOffsets(database *mongo.Database, topic string, partitions uint8
 	fmt.Printf("TopicOffsets inserted with ids=%v\n", result.InsertedIDs)
 }
 
+func UpdateTopicOffset(database *mongo.Database, topic string, partition uint8, offset uint32) {
+	collection := database.Collection(TopicOffsetCollectionName)
+	ctx, cancel := context.WithTimeout(context.Background(), constants.DatabaseTimeOut)
+	defer cancel()
+	filter := bson.D{{"_id", TopicPartition{Topic: topic, Partition: partition}}}
+	update := bson.D{{"$set", bson.D{
+		{"offset", offset},
+	}}}
+	result, err := collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("TopicOffset set with result=%v\n", result)
+}
+
 func GetTopicOffsetMap(database *mongo.Database) *map[TopicPartition]*TopicOffsetCache {
 	collection := database.Collection(TopicOffsetCollectionName)
 	ctx, cancel := context.WithTimeout(context.Background(), constants.DatabaseTimeOut)
