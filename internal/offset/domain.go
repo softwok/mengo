@@ -6,6 +6,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"mengo/internal/constants"
+	"sync"
 )
 
 const ConsumerGroupOffsetCollectionName = "consumerGroupOffsets"
@@ -37,6 +38,11 @@ type CommitRequest struct {
 	Topic         string `json:"topic"`
 	ConsumerGroup string `json:"consumerGroup"`
 	Partition     uint8  `json:"partition"`
+}
+
+type TopicOffsetCache struct {
+	Offset uint32
+	Mu     sync.Mutex
 }
 
 func GetConsumerGroupOffset(database *mongo.Database, consumerGroup string, topic string, partition uint8) ConsumerGroupOffset {
@@ -146,40 +152,25 @@ func CreateTopicOffsets(database *mongo.Database, topic string, partitions uint8
 	fmt.Printf("TopicOffsets inserted with ids=%v\n", result.InsertedIDs)
 }
 
-func GetTopicOffset(database *mongo.Database, topic string, partition uint8) uint32 {
+func GetTopicOffsetMap(database *mongo.Database) *map[TopicPartition]*TopicOffsetCache {
 	collection := database.Collection(TopicOffsetCollectionName)
 	ctx, cancel := context.WithTimeout(context.Background(), constants.DatabaseTimeOut)
 	defer cancel()
-	topicPartition := TopicPartition{
-		Topic:     topic,
-		Partition: partition,
-	}
-	filter := bson.D{{"_id", topicPartition}}
-	result := collection.FindOne(ctx, filter)
-	if result.Err() != nil {
-		panic(result.Err())
-	}
-	var topicOffset TopicOffset
-	err := result.Decode(&topicOffset)
+	filter := bson.D{{}}
+	cursor, err := collection.Find(ctx, filter)
 	if err != nil {
 		panic(err)
 	}
-	return topicOffset.Offset
-}
-
-func IncrementTopicOffset(database *mongo.Database, topic string, partition uint8) {
-	collection := database.Collection(TopicOffsetCollectionName)
-	ctx, cancel := context.WithTimeout(context.Background(), constants.DatabaseTimeOut)
-	defer cancel()
-	topicPartition := TopicPartition{
-		Topic:     topic,
-		Partition: partition,
-	}
-	filter := bson.D{{"_id", topicPartition}}
-	update := bson.D{{"$inc", bson.D{{"offset", 1}}}}
-	result, err := collection.UpdateOne(ctx, filter, update)
-	if err != nil {
+	var topicOffsets []TopicOffset
+	if err = cursor.All(ctx, &topicOffsets); err != nil {
 		panic(err)
 	}
-	fmt.Printf("TopicOffsets incremented with result=%v\n", result)
+	if topicOffsets == nil {
+		topicOffsets = make([]TopicOffset, 0)
+	}
+	topicPartitionMap := make(map[TopicPartition]*TopicOffsetCache)
+	for _, topicOffset := range topicOffsets {
+		topicPartitionMap[topicOffset.Id] = &TopicOffsetCache{Offset: topicOffset.Offset}
+	}
+	return &topicPartitionMap
 }

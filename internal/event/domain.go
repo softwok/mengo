@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"mengo/internal/constants"
 	"mengo/internal/offset"
@@ -28,26 +29,29 @@ type Payload struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-func Persist(database *mongo.Database, payload *Payload) {
-	// The whole method should be transactional
+func Persist(database *mongo.Database, payload *Payload, topicOffsetCache *offset.TopicOffsetCache) {
+	topicOffsetCache.Mu.Lock()
+	defer topicOffsetCache.Mu.Unlock()
 	collection := database.Collection(payload.Topic)
-	ctx, cancel := context.WithTimeout(context.Background(), constants.DatabaseTimeOut)
-	defer cancel()
-	o := offset.GetTopicOffset(database, payload.Topic, payload.Partition)
 	e := Event{
 		Id:        payload.Id,
 		Partition: payload.Partition,
-		Offset:    o,
+		Offset:    topicOffsetCache.Offset,
 		Event:     payload.Event,
 		EntityId:  payload.EntityId,
 		Timestamp: payload.Timestamp,
 	}
+	if e.Id == "" {
+		e.Id = primitive.NewObjectID().Hex()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), constants.DatabaseTimeOut)
+	defer cancel()
 	result, err := collection.InsertOne(ctx, e)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Event inserted with id=%v\n", result.InsertedID)
-	offset.IncrementTopicOffset(database, payload.Topic, payload.Partition)
+	fmt.Printf("Event inserted with id=%v\n", result)
+	topicOffsetCache.Offset++
 }
 
 func List(database *mongo.Database, consumerGroup string, topic string, partition uint8) []Event {
@@ -63,7 +67,7 @@ func List(database *mongo.Database, consumerGroup string, topic string, partitio
 		panic(err)
 	}
 	var results []Event
-	if err = cursor.All(context.TODO(), &results); err != nil {
+	if err = cursor.All(ctx, &results); err != nil {
 		panic(err)
 	}
 	if results == nil {

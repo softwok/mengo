@@ -48,11 +48,12 @@ func main() {
 		log.Fatalf("MongoDB ping failed with error=%v\n", err)
 	}
 	database := client.Database(databaseName)
+	topicOffsetMap := offset.GetTopicOffsetMap(database)
 	// Create a new HTTP server
 	srv := &http.Server{
 		Addr: ":8080",
 		Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			handleRequest(writer, request, database)
+			handleRequest(writer, request, database, topicOffsetMap)
 		}),
 	}
 
@@ -83,7 +84,8 @@ func main() {
 	log.Println("Server gracefully shut down")
 }
 
-func handleRequest(w http.ResponseWriter, r *http.Request, database *mongo.Database) {
+func handleRequest(w http.ResponseWriter, r *http.Request, database *mongo.Database,
+	topicOffsetMap *map[offset.TopicPartition]*offset.TopicOffsetCache) {
 	if r.URL.Path == "/create-topic" && r.Method == http.MethodPost {
 		var model topic.Topic
 		if err := json.NewDecoder(r.Body).Decode(&model); err != nil {
@@ -112,7 +114,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request, database *mongo.Datab
 			return
 		}
 		log.Printf("Request received=%v\n", model)
-		event.Persist(database, &model)
+		m := *topicOffsetMap
+		offsetCache := m[offset.TopicPartition{
+			Topic:     model.Topic,
+			Partition: model.Partition,
+		}]
+		event.Persist(database, &model, offsetCache)
 	} else if r.URL.Path == "/commit" && r.Method == http.MethodPost {
 		var model offset.CommitRequest
 		if err := json.NewDecoder(r.Body).Decode(&model); err != nil {
